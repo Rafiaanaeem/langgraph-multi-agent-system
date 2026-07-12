@@ -69,6 +69,6 @@ def movie_node(state: dict) -> dict:
     response = chain.invoke({"user_input": user_message})
     
     return {
-        "messages": [response], 
+        "messages":[response], 
         "last_agent": "Movie Agent"  
     }
