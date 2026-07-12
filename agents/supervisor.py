@@ -20,9 +20,7 @@ def supervisor_node(state: dict) -> dict:
     ])
     
     user_message = state["messages"][-1].content
-    
     chain = prompt | llm | StrOutputParser()
-    
     response = chain.invoke({"user_input": user_message})
     
     next_agent = response.strip().upper()
