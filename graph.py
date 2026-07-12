@@ -49,5 +49,4 @@ def build_graph():
     workflow.add_edge("MOVIE", END)
     
     return workflow.compile()
-
 app = build_graph()
