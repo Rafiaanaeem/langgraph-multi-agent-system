@@ -92,7 +92,6 @@ def chat_endpoint(request: ChatRequest):
 
     initial_state = {"messages": [HumanMessage(content=user_text)]}
     final_state = langgraph_app.invoke(initial_state)
-    
     ai_response = final_state["messages"][-1].content
     agent_name = final_state.get("last_agent", "Supervisor")
 
