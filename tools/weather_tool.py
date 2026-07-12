@@ -1,12 +1,11 @@
 import requests
 from langchain_core.tools import tool
 from config import Config
-
 @tool
 def get_current_weather(city: str) -> str:
     """Fetches the current weather for a given city using OpenWeatherMap."""
     api_key = Config.WEATHER_API_KEY
-    
+
     if not api_key:
         return "Error: OpenWeatherMap API key is missing. Please configure it in the .env file."
         
