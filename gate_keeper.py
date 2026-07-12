@@ -15,7 +15,7 @@ def check_casual_conversation(user_input: str) -> Optional[str]:
         Optional[str]: The LLM's conversational response, or None if the request 
                        needs to be routed to the Multi-Agent graph.
     """
-    
+
     llm = ChatGroq(
         api_key=Config.GROQ_API_KEY,
         model=Config.MODEL_NAME,
