@@ -71,7 +71,6 @@ WEATHER,SUMMARY
 
 Unsupported Requests:
 If the user asks two completely unrelated tasks together (e.g. weather + movie), return UNSUPPORTED.
-
 Output Rules:
 Return ONLY the execution plan agent names in uppercase.
 Do NOT explain.
