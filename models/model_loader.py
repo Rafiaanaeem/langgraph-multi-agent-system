@@ -21,7 +21,6 @@ class ArcFaceModel:
             bbox = face.bbox.astype(int).tolist()
             embedding = face.embedding
             norm_emb = embedding / np.linalg.norm(embedding)
-            
             results.append({
                 "face_index": idx,
                 "bbox": {"x1": bbox[0], "y1": bbox[1], "x2": bbox[2], "y2": bbox[3]},
