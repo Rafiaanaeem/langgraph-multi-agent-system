@@ -51,7 +51,7 @@ async def face_recognition_node(state: dict) -> dict:
         action = parsed_result.intent.upper()
         person_name = parsed_result.person_name
     except Exception as e:
-        print(f"⚠️ LLM Parsing error: {e}")
+        print(f" LLM Parsing error: {e}")
         action, person_name = "SEARCH", None
 
     # Route to Tool

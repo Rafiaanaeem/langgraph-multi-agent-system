@@ -51,7 +51,7 @@ def update_queue(state: dict, current_node_name: str) -> dict:
     Removes the finished agent from the queue and logs queue transitions.
     """
     queue = list(state.get("agent_queue", []))
-    print(f"🔍 [QUEUE BEFORE - {current_node_name}]: {queue}")
+    print(f" [QUEUE BEFORE - {current_node_name}]: {queue}")
 
     if queue and queue[0] == current_node_name:
         queue = queue[1:]
@@ -61,7 +61,7 @@ def update_queue(state: dict, current_node_name: str) -> dict:
         "agent_queue": queue,
         "current_agent": next_agent
     }
-    print(f"✅ [QUEUE AFTER  - {current_node_name}]: {queue} | Next Agent: '{next_agent}'")
+    print(f" [QUEUE AFTER  - {current_node_name}]: {queue} | Next Agent: '{next_agent}'")
     return updates
 
 

@@ -43,7 +43,7 @@ class AddTool:
         if image is None:
             return {"success": False, "message": "Uploaded file is empty or unreadable."}
 
-        # Extract faces
+        # to extract the faces from the image
         faces = self.app.extract(image)
         if len(faces) == 0:
             return {"success": False, "message": "No face detected in the image. Please upload a clear photo."}
@@ -78,7 +78,7 @@ class SearchTool:
         if not files:
             return {"success": False, "message": "No images provided.", "results": []}
 
-        print(f"📊 [SearchTool] Searching among {self.collection.count()} total vectors...")
+        print(f" [SearchTool] Searching among {self.collection.count()} total vectors...")
         all_results = []
         
         for file_item in files:
@@ -90,7 +90,7 @@ class SearchTool:
             matches_for_this_image = []
 
             if len(faces) == 0:
-                print(f"⚠️ No faces detected in {filename}")
+                print(f" No faces detected in {filename}")
             else:
                 for idx, face_data in enumerate(faces):
                     query_embedding = face_data["embedding"]
