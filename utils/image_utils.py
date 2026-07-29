@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from fastapi import HTTPException, status
-
 def decode_image_bytes(image_bytes: bytes) -> np.ndarray:
     """Decodes a raw byte stream into an OpenCV BGR numpy array."""
     try:
