@@ -1,17 +1,35 @@
 import requests
 from langchain_core.tools import tool
 from config import Config
+
 @tool
-def get_current_weather(city: str) -> str:
-    """Fetches the current weather for a given city using OpenWeatherMap."""
+def get_current_weather(city: str = "Islamabad") -> str:
+    """Fetches the current weather for a given city using OpenWeatherMap.
+    If no city is provided or if city is empty, defaults to Islamabad.
+    """
+    # Safeguard if the LLM passes an empty string or None
+    if not city or not str(city).strip():
+        city = "Islamabad"
+
     api_key = Config.WEATHER_API_KEY
+    print("Weather API Key:", api_key)
 
     if not api_key:
         return "Error: OpenWeatherMap API key is missing. Please configure it in the .env file."
         
     try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-        response = requests.get(url).json()
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city.strip()}&appid={api_key}&units=metric"
+        
+        # CRITICAL FIX: Added timeout=5 to prevent the app from freezing indefinitely
+        print("Before request")
+
+        response = requests.get(url, timeout=5)
+
+        print("Status Code:", response.status_code)
+
+        print("After request")
+
+        response = response.json()
         
         if response.get("cod") != 200:
             return f"Error fetching weather: {response.get('message', 'City not found')}."
@@ -22,9 +40,12 @@ def get_current_weather(city: str) -> str:
         wind_speed = response["wind"]["speed"]
         
         return (
+            f"City: {city.strip().title()}, "
             f"Temperature: {temp}°C (Feels like {feels_like}°C), "
             f"Condition: {condition}, "
             f"Wind Speed: {wind_speed} m/s."
         )
+    except requests.exceptions.Timeout:
+        return "Error: The weather service took too long to respond. Please try again later."
     except Exception as e:
         return f"An error occurred while fetching the weather: {str(e)}"

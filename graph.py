@@ -9,10 +9,16 @@ from agents.all_agents import (
     facts_node, 
     movie_node
 )
+# 1. IMPORT THE NEW FACE AGENT NODE
+from agents.face_agent import face_recognition_node
+
+def route_next_agent(state: AgentState) -> str:
+    queue = state.get("agent_queue", [])
+    if len(queue) > 0:
+        return queue[0]  
+    return END  
 
 def build_graph():
-    """Builds and compiles the Multi-Agent LangGraph."""
-    
     workflow = StateGraph(AgentState)
     
     workflow.add_node("supervisor", supervisor_node)
@@ -22,31 +28,31 @@ def build_graph():
     workflow.add_node("FACTS", facts_node)
     workflow.add_node("MOVIE", movie_node)
     
+    # 2. ADD THE FACE NODE
+    workflow.add_node("FACE", face_recognition_node)
+    
     workflow.add_edge(START, "supervisor")
     
+    routing_map = {
+        "WEATHER": "WEATHER",
+        "SUMMARY": "SUMMARY",
+        "TRANSLATION": "TRANSLATION",
+        "FACTS": "FACTS",
+        "MOVIE": "MOVIE",
+        "FACE": "FACE",   # 3. ADD FACE TO ROUTING MAP
+        END: END
+    }
 
-    def route_from_supervisor(state: AgentState) -> str:
-        """Reads the 'next_node' variable set by the supervisor to determine the path."""
-        return state.get("next_node")
-        
-  
-    workflow.add_conditional_edges(
-        "supervisor",
-        route_from_supervisor,
-        {
-            "WEATHER": "WEATHER",
-            "SUMMARY": "SUMMARY",
-            "TRANSLATION": "TRANSLATION",
-            "FACTS": "FACTS",
-            "MOVIE": "MOVIE"
-        }
-    )
+    workflow.add_conditional_edges("supervisor", route_next_agent, routing_map)
+    workflow.add_conditional_edges("WEATHER", route_next_agent, routing_map)
+    workflow.add_conditional_edges("SUMMARY", route_next_agent, routing_map)
+    workflow.add_conditional_edges("TRANSLATION", route_next_agent, routing_map)
+    workflow.add_conditional_edges("FACTS", route_next_agent, routing_map)
+    workflow.add_conditional_edges("MOVIE", route_next_agent, routing_map)
     
-    workflow.add_edge("WEATHER", END)
-    workflow.add_edge("SUMMARY", END)
-    workflow.add_edge("TRANSLATION", END)
-    workflow.add_edge("FACTS", END)
-    workflow.add_edge("MOVIE", END)
+    # 4. ADD CONDITIONAL EDGE FOR FACE
+    workflow.add_conditional_edges("FACE", route_next_agent, routing_map)
     
     return workflow.compile()
+
 app = build_graph()

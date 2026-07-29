@@ -17,3 +17,20 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Vector Database (ChromaDB local storage)
+chroma/
+chroma_db/
+*.chroma
+*.sqlite3
+
+# Face Recognition Models & Weights (ArcFace / InsightFace)
+.insightface/
+.deepface/
+models/*.onnx
+models/*.pth
+models/*.h5
+models/*.bin
+*.onnx
+*.pth
+*.h5

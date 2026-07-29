@@ -1,62 +1,150 @@
 from typing import Optional
 from langchain_groq import ChatGroq
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from config import Config
+
+# 1. Classifier LLM (max_tokens=10 prevents long answer generation)
+gatekeeper_llm = ChatGroq(
+    api_key=Config.GROQ_API_KEY,
+    model=Config.MODEL_NAME,
+    temperature=0, 
+    max_tokens=10   
+)
+
+# 2. Response LLM (only invoked when the query is strictly casual chit-chat)
+casual_llm = ChatGroq(
+    api_key=Config.GROQ_API_KEY,
+    model=Config.MODEL_NAME,
+    temperature=0.7,
+    max_tokens=100
+)
+
+# 3. Pure Binary Classification Prompt
+# SYSTEM_PROMPT = """You are a strict routing classifier for an AI system.
+
+# Your ONLY job is to output one word: "ROUTE" or "CASUAL".
+
+# Output "ROUTE" if the user input contains ANY task, request, command, or information query:
+# - Movie/TV recommendations ("Recommend action movies", "Suggest films after 2023")
+# - Weather questions ("Weather in Quetta")
+# - Summaries, translations, facts, trivia
+# - Image, face, or vision tasks
+# - Any specific question requiring real knowledge
+
+# Output "CASUAL" ONLY for simple zero-task greetings or identity chit-chat:
+# - "Hi", "Hello", "Hey", "Good morning"
+# - "How are you?", "What's up?"
+# - "Who are you?", "Who made you?"
+# - "Thank you", "Bye"
+
+# RULES:
+# - NEVER answer the user's request.
+# - Output MUST be strictly one word: "ROUTE" or "CASUAL".
+# """
+SYSTEM_PROMPT="""You are ONLY a classifier.
+
+Your job is to decide whether the user's request should be routed to a specialized AI agent.
+
+Available agents:
+
+1. WEATHER
+- weather
+- temperature
+- forecast
+- rain
+- humidity
+- climate
+
+2. FACE
+- recognize a person
+- identify a person
+- who is this
+- who are these
+- detect faces
+- compare faces
+- save person
+- register person
+- enroll person
+- add person
+- store person
+- remember this face
+- save this face
+- this image
+- attached image
+- uploaded image
+
+3. SUMMARY
+- summarize
+- summary
+- shorten this
+- brief this
+
+4. TRANSLATION
+- translate
+- convert into
+- translate this into
+
+5. FACTS
+- tell me facts
+- random facts
+- interesting facts
+
+6. MOVIE
+- recommend movies
+- suggest movies
+- movie recommendations
+
+Rules:
+
+If the request belongs to ANY of these tasks,
+reply with ONLY
+
+ROUTE
+
+Nothing else.
+
+Never answer the user.
+
+Never greet the user.
+
+Never explain.
+
+Never continue the conversation.
+
+If the request does NOT belong to any of the above tasks,
+answer normally."""
+
+triage_prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    ("human", "{user_input}")
+])
+
+chain = triage_prompt | gatekeeper_llm
+
 
 def check_casual_conversation(user_input: str) -> Optional[str]:
     """
     Acts as a smart gatekeeper before the LangGraph multi-agent system.
-    Uses an LLM to determine if the query is casual talk or a specialized task.
     
-    Args:
-        user_input (str): The raw message from the user.
-        
     Returns:
-        Optional[str]: The LLM's conversational response, or None if the request 
-                       needs to be routed to the Multi-Agent graph.
+        Optional[str]: Direct response string for casual chat, or None to hand off to LangGraph.
     """
-
-    llm = ChatGroq(
-        api_key=Config.GROQ_API_KEY,
-        model=Config.MODEL_NAME,
-        temperature=0.3, 
-        max_tokens=150   
-    )
-
-    triage_prompt = PromptTemplate(
-        input_variables=["user_input"],
-        template="""You are the conversational gatekeeper for an advanced Multi-Agent AI System.
-Your job is to evaluate the user's input and decide how it should be handled.
-
-The system has specialized agents for ONLY these tasks:
-1. Weather updates
-2. Text summarization
-3. Language translation
-4. Random facts generation
-5. Movie recommendations
-
-RULES:
-- If the user asks for ANY of the specialized tasks above, you MUST reply with exactly the word "ROUTE" and absolutely nothing else.
-- If the user says a greeting, asks a general question, makes small talk, or asks about something unrelated to the specialized tasks 
--(e.g., "Hi", "Tell me a joke", "Who is Einstein?", "How are you?"), respond to 
--them directly in a polite, engaging, and concise manner.
-
-User Input: {user_input}
-Response:"""
-    )
-
-    chain = triage_prompt | llm
-    
     try:
         response = chain.invoke({"user_input": user_input})
-        content = response.content.strip()
+        classification = response.content.strip().upper().rstrip(".")
         
-        if content.upper() == "ROUTE":
+        print(f"🚪 [Gatekeeper Decision]: '{classification}' for input: '{user_input}'")
+
+        # If classified as ROUTE (or anything other than CASUAL), pass to LangGraph
+        if classification != "CASUAL":
             return None
             
-        return content
-        
-    except Exception as e:
-        print(f"[ERROR] Gatekeeper failed: {e}")
-        return None
+        # If strictly CASUAL, generate a friendly greeting
+        casual_reply = casual_llm.invoke(
+            f"Respond briefly and politely to this greeting: {user_input}"
+        )
+        return casual_reply.content.strip()
 
+    except Exception as e:
+        print(f"⚠️ [Gatekeeper Error]: {e}")
+        return None  # On error, safely fall back to LangGraph
