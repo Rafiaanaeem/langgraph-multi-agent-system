@@ -20,7 +20,6 @@ def get_current_weather(city: str = "Islamabad") -> str:
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city.strip()}&appid={api_key}&units=metric"
         
-        # CRITICAL FIX: Added timeout=5 to prevent the app from freezing indefinitely
         print("Before request")
 
         response = requests.get(url, timeout=5)
