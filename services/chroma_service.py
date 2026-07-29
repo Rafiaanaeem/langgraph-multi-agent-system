@@ -3,7 +3,6 @@ from typing import List, Dict, Any
 from config import Config
 from fastapi import HTTPException, status
 from pathlib import Path
-print(">>>>>>>> USING CHROMA_SERVICE.PY <<<<<<<<")
 
 class ChromaService:
     def __init__(self):
