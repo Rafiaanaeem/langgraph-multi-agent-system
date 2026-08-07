@@ -3,7 +3,6 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from config import Config
 
-# 1. Classifier LLM (max_tokens=10 prevents long answer generation)
 gatekeeper_llm = ChatGroq(
     api_key=Config.GROQ_API_KEY,
     model=Config.MODEL_NAME,
@@ -11,7 +10,6 @@ gatekeeper_llm = ChatGroq(
     max_tokens=10   
 )
 
-# 2. Response LLM (only invoked when the query is strictly casual chit-chat)
 casual_llm = ChatGroq(
     api_key=Config.GROQ_API_KEY,
     model=Config.MODEL_NAME,
@@ -19,28 +17,7 @@ casual_llm = ChatGroq(
     max_tokens=100
 )
 
-# 3. Pure Binary Classification Prompt
-# SYSTEM_PROMPT = """You are a strict routing classifier for an AI system.
 
-# Your ONLY job is to output one word: "ROUTE" or "CASUAL".
-
-# Output "ROUTE" if the user input contains ANY task, request, command, or information query:
-# - Movie/TV recommendations ("Recommend action movies", "Suggest films after 2023")
-# - Weather questions ("Weather in Quetta")
-# - Summaries, translations, facts, trivia
-# - Image, face, or vision tasks
-# - Any specific question requiring real knowledge
-
-# Output "CASUAL" ONLY for simple zero-task greetings or identity chit-chat:
-# - "Hi", "Hello", "Hey", "Good morning"
-# - "How are you?", "What's up?"
-# - "Who are you?", "Who made you?"
-# - "Thank you", "Bye"
-
-# RULES:
-# - NEVER answer the user's request.
-# - Output MUST be strictly one word: "ROUTE" or "CASUAL".
-# """
 SYSTEM_PROMPT="""You are ONLY a classifier.
 
 Your job is to decide whether the user's request should be routed to a specialized AI agent.
@@ -135,11 +112,9 @@ def check_casual_conversation(user_input: str) -> Optional[str]:
         
         print(f"🚪 [Gatekeeper Decision]: '{classification}' for input: '{user_input}'")
 
-        # If classified as ROUTE (or anything other than CASUAL), pass to LangGraph
         if classification != "CASUAL":
             return None
-            
-        # If strictly CASUAL, generate a friendly greeting
+        
         casual_reply = casual_llm.invoke(
             f"Respond briefly and politely to this greeting: {user_input}"
         )
