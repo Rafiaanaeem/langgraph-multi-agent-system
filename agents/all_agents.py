@@ -1,9 +1,11 @@
 from pathlib import Path
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.prebuilt import create_react_agent
 from tools.weather_tool import get_current_weather
 from config import Config
+from state import SubTaskState 
+import re
+from tools.weather_tool import get_current_weather
 
 PROMPTS_DIR = Path("prompts")
 
@@ -14,16 +16,11 @@ llm = ChatGroq(
 )
 
 weather_prompt_text = (PROMPTS_DIR / "weather_prompt.md").read_text(encoding="utf-8")
-translation_prompt_text = (PROMPTS_DIR / "translation_prompt.md").read_text()
-summary_prompt_text = (PROMPTS_DIR / "summary_prompt.md").read_text()
-facts_prompt_text = (PROMPTS_DIR / "facts_prompt.md").read_text()
-movie_prompt_text = (PROMPTS_DIR / "fifth_agent_prompt.md").read_text()
+translation_prompt_text = (PROMPTS_DIR / "translation_prompt.md").read_text(encoding="utf-8")
+summary_prompt_text = (PROMPTS_DIR / "summary_prompt.md").read_text(encoding="utf-8")
+facts_prompt_text = (PROMPTS_DIR / "facts_prompt.md").read_text(encoding="utf-8")
+movie_prompt_text = (PROMPTS_DIR / "fifth_agent_prompt.md").read_text(encoding="utf-8")
 
-weather_agent = create_react_agent(
-    model=llm,
-    tools=[get_current_weather],
-    prompt=weather_prompt_text
-)
 
 translation_chain = ChatPromptTemplate.from_messages([
     ("system", translation_prompt_text),
@@ -45,115 +42,76 @@ movie_chain = ChatPromptTemplate.from_messages([
     ("human", "{user_input}")
 ]) | llm
 
-
-def update_queue(state: dict, current_node_name: str) -> dict:
+def build_input(state: SubTaskState, is_processing: bool = False) -> str:
     """
-    Removes the finished agent from the queue and logs queue transitions.
+    Constructs the input string.
+    If it's a processing agent (Translation/Summary), it includes the merged context.
     """
-    queue = list(state.get("agent_queue", []))
-    print(f" [QUEUE BEFORE - {current_node_name}]: {queue}")
-
-    if queue and queue[0] == current_node_name:
-        queue = queue[1:]
-
-    next_agent = queue[0] if queue else ""
-    updates = {
-        "agent_queue": queue,
-        "current_agent": next_agent
-    }
-    print(f" [QUEUE AFTER  - {current_node_name}]: {queue} | Next Agent: '{next_agent}'")
-    return updates
-
-
-def build_chained_input(state: dict) -> str:
-    """
-    Safely retrieves context for chained executions. If an agent ran previously,
-    combines the original user prompt with the previous agent's output.
-    """
-    messages = state.get("messages", [])
-    if not messages:
-        return ""
+    query = state.get("query", "")
+    context = state.get("context", "")
     
-    if len(messages) == 1:
-        return messages[0].content
-    
-    original_request = messages[0].content
-    latest_data = messages[-1].content
-    return f"User Instruction: {original_request}\n\nContext/Data to Process:\n{latest_data}"
+    if is_processing and context:
+        return f"--- DATA TO PROCESS (FROM PREVIOUS STAGE) ---\n{context}\n\n--- USER INSTRUCTION ---\n{query}"
+    return f"USER INSTRUCTION:\n{query}"
+
+def format_agent_output(state: SubTaskState, agent_name: str, content: str) -> dict:
+    """
+    Routes the output to 'final_outputs' if this is the last stage,
+    otherwise routes it to 'step_results' to be merged.
+    """
+    if state.get("is_final", False):
+        return {"final_outputs": [{"agent": agent_name, "content": content}]}
+    else:
+        return {"step_results": [f"[{agent_name} Output]:\n{content}"]}
 
 
-def weather_node(state: dict) -> dict:
-    print("\n===== WEATHER AGENT STARTED =====")
-    
-    result = weather_agent.invoke(
-        {"messages": state["messages"]},
-        config={"recursion_limit": 5}
+
+
+
+def weather_node(state: SubTaskState) -> dict:
+    print("\n===== WEATHER AGENT EXECUTING =====")
+    query = state.get("query", "").strip()
+    city = "Islamabad"
+    patterns = [
+        r"weather\s+(?:of|in)\s+(.+)",
+        r"(?:of|in)\s+(.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, query, re.IGNORECASE)
+        if match:
+            city = match.group(1).strip()
+            break
+    city = city.replace("?", "").replace(".", "").strip()
+    print(f"[Weather Node] City = {city}")
+    weather_result = get_current_weather.invoke({"city": city})
+    return format_agent_output(
+        state,
+        "WEATHER",
+        weather_result
     )
-
-    queue_updates = update_queue(state, "WEATHER")
-
-    return {
-        **queue_updates,
-        "messages": [result["messages"][-1]],
-        "last_agent": "Weather Agent",
-    }
+def translation_node(state: SubTaskState) -> dict:
+    print("\n===== TRANSLATION AGENT EXECUTING =====")
+    user_input = build_input(state, is_processing=True)
+    response = translation_chain.invoke({"user_input": user_input})
+    return format_agent_output(state, "TRANSLATION", response.content)
 
 
-def translation_node(state: dict) -> dict:
-    print("\n===== TRANSLATION AGENT STARTED =====")
-    
-    combined_input = build_chained_input(state)
-    response = translation_chain.invoke({"user_input": combined_input})
-    
-    queue_updates = update_queue(state, "TRANSLATION")
-    
-    return {
-        "messages": [response], 
-        "last_agent": "Translation Agent",
-        **queue_updates
-    }
+def summary_node(state: SubTaskState) -> dict:
+    print("\n===== SUMMARY AGENT EXECUTING =====")
+    user_input = build_input(state, is_processing=True)
+    response = summary_chain.invoke({"user_input": user_input})
+    return format_agent_output(state, "SUMMARY", response.content)
 
 
-def summary_node(state: dict) -> dict:
-    print("\n===== SUMMARY AGENT STARTED =====")
-    
-    combined_input = build_chained_input(state)
-    response = summary_chain.invoke({"user_input": combined_input})
-    
-    queue_updates = update_queue(state, "SUMMARY")
-    
-    return {
-        "messages": [response], 
-        "last_agent": "Summary Agent",
-        **queue_updates
-    }
+def facts_node(state: SubTaskState) -> dict:
+    print("\n===== FACTS AGENT EXECUTING =====")
+    user_input = build_input(state, is_processing=False)
+    response = facts_chain.invoke({"user_input": user_input})
+    return format_agent_output(state, "FACTS", response.content)
 
 
-def facts_node(state: dict) -> dict:
-    print("\n===== FACTS AGENT STARTED =====")
-    
-    combined_input = build_chained_input(state)
-    response = facts_chain.invoke({"user_input": combined_input})
-    
-    queue_updates = update_queue(state, "FACTS")
-    
-    return {
-        "messages": [response], 
-        "last_agent": "Facts Agent",
-        **queue_updates
-    }
-
-
-def movie_node(state: dict) -> dict:
-    print("\n===== MOVIE AGENT STARTED =====")
-    
-    combined_input = build_chained_input(state)
-    response = movie_chain.invoke({"user_input": combined_input})
-    
-    queue_updates = update_queue(state, "MOVIE")
-    
-    return {
-        "messages": [response], 
-        "last_agent": "Movie Agent",
-        **queue_updates
-    }
+def movie_node(state: SubTaskState) -> dict:
+    print("\n===== MOVIE AGENT EXECUTING =====")
+    user_input = build_input(state, is_processing=False)
+    response = movie_chain.invoke({"user_input": user_input})
+    return format_agent_output(state, "MOVIE", response.content)

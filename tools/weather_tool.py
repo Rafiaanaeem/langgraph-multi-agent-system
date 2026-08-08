@@ -37,13 +37,16 @@ def get_current_weather(city: str = "Islamabad") -> str:
         feels_like = response["main"]["feels_like"]
         condition = response["weather"][0]["description"]
         wind_speed = response["wind"]["speed"]
+        humidity = response["main"]["humidity"]
         
         return (
-            f"City: {city.strip().title()}, "
-            f"Temperature: {temp}°C (Feels like {feels_like}°C), "
-            f"Condition: {condition}, "
-            f"Wind Speed: {wind_speed} m/s."
-        )
+    f"City: {city.title()}\n"
+    f"Temperature: {temp}°C\n"
+    f"Feels Like: {feels_like}°C\n"
+    f"Condition: {condition}\n"
+    f"Humidity: {humidity}%\n"
+    f"Wind Speed: {wind_speed} m/s"
+)
     except requests.exceptions.Timeout:
         return "Error: The weather service took too long to respond. Please try again later."
     except Exception as e:

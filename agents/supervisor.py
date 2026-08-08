@@ -1,77 +1,70 @@
-from pathlib import Path
-
+import os
+from typing import List, Dict, Any
+from pydantic import BaseModel, Field
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import SystemMessage, HumanMessage
 
-from config import Config
-
-
-PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "supervisor_prompt.md"
-SUPERVISOR_PROMPT = PROMPT_PATH.read_text()
-
-VALID_AGENTS = {
-    "WEATHER",
-    "SUMMARY",
-    "TRANSLATION",
-    "FACTS",
-    "MOVIE",
-    "FACE"
-}
-
-
-def supervisor_node(state: dict) -> dict:
-    """
-    Planner Node
-
-    Reads the user request and creates an execution queue.
-
-    Example outputs:
-    WEATHER
-    FACE
-    FACTS,SUMMARY
-    """
-
-    llm = ChatGroq(
-        model=Config.MODEL_NAME,
-        api_key=Config.GROQ_API_KEY,
-        temperature=0
+class SubTask(BaseModel):
+    agent: str = Field(
+        description="The exact name of the target agent (e.g. WEATHER, FACTS, TRANSLATION, SUMMARY, MOVIE, FACE)"
+    )
+    query: str = Field(
+        description="The specific prompt or instruction for this agent"
     )
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SUPERVISOR_PROMPT),
-        ("human", "{user_input}")
-    ])
+class Stage(BaseModel):
+    tasks: List[SubTask]
 
-    chain = prompt | llm | StrOutputParser()
 
-    user_message = state["messages"][-1].content
+class ExecutionPlan(BaseModel):
+    steps: List[Stage]
+def get_supervisor_plan(user_query: str, prompt_path: str = "prompts/supervisor_prompt.md") -> ExecutionPlan:
+    """Generates a structured multi-stage execution plan using Groq."""
+    if os.path.exists(prompt_path):
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            system_prompt = f.read()
+    else:
+        system_prompt = "You are an AI multi-agent supervisor. Create a structured plan for the query."
 
-    response = chain.invoke({
-        "user_input": user_message
-    }).strip().upper()
+    llm = ChatGroq(
+        model_name="llama-3.1-8b-instant",
+        temperature=0.0
+    )
 
-    if response == "UNSUPPORTED":
-        return {
-            "agent_queue": [],
-            "current_agent": "",
-            "last_agent": "SUPERVISOR"
-        }
+    structured_llm = llm.with_structured_output(
+        ExecutionPlan,
+        method="function_calling"
+    )
 
-    agent_queue = [
-        agent.strip()
-        for agent in response.split(",")
-        if agent.strip()
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_query)
     ]
 
-    for agent in agent_queue:
-        if agent not in VALID_AGENTS:
-            raise ValueError(
-                f"Supervisor returned invalid agent: {agent}"
-            )
+    plan_result: ExecutionPlan = structured_llm.invoke(messages)
 
+    print(f"\n[DEBUG] Generated Execution Plan:\n{plan_result}\n")
+    return plan_result
+
+def supervisor_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    LangGraph supervisor node. Extracts user input from graph state,
+    generates the execution plan, and updates the graph state.
+    """
+    user_query = state.get("query", "")
+    if not user_query and state.get("messages"):
+        last_msg = state["messages"][-1]
+        user_query = getattr(last_msg, "content", str(last_msg))
+
+    plan = get_supervisor_plan(user_query)
+
+    raw_steps = [
+    [task.model_dump() for task in stage.tasks]
+    for stage in plan.steps
+]
     return {
-        "agent_queue": agent_queue,
-        "current_agent": agent_queue[0],
-        "last_agent": ""
+        "plan": raw_steps,
+        "current_stage": 0,
+        "outputs": [],
+        "last_agent": "SUPERVISOR"
     }

@@ -1,12 +1,12 @@
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import AIMessage
 from langchain_groq import ChatGroq
 from config import Config
+from state import SubTaskState
 from agents.tools import AddTool, SearchTool
-from agents.all_agents import update_queue
 from models.model_loader import arcface
 from services.chroma_service import chroma_db
+
 collection = chroma_db.collection
 add_tool = AddTool(face_app=arcface, collection=collection)
 search_tool = SearchTool(face_app=arcface, collection=collection)
@@ -19,7 +19,7 @@ llm = ChatGroq(
 
 class FaceIntentOutput(BaseModel):
     intent: str = Field(
-        description="Output 'ADD' if user wants to enroll, register, save, or add a face. Output 'SEARCH' if they want to identify, recognize, search, or ask 'who is this'."
+        description="Output 'ADD' or 'SEARCH'."
     )
     person_name: str | None = Field(
         default=None, 
@@ -28,56 +28,41 @@ class FaceIntentOutput(BaseModel):
 
 parser = llm.with_structured_output(FaceIntentOutput)
 
+# Much stronger system prompt for precise intent classification
+INTENT_SYSTEM_PROMPT = """You are an intent classifier.
+Classify the request into exactly ONE intent.
+
+ADD
+Use when the user wants to:
+- save
+- register
+- add
+- enroll
+- store
+- insert
+- create a new person
+
+SEARCH
+Use when the user wants to:
+- identify
+- recognize
+- find
+- search
+- who is this
+- whose face
+- detect the person
+
+If ADD, extract the complete person name.
+If SEARCH, person_name must be null.
+
+Never explain. Only produce structured output."""
+
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "Extract the face recognition intent ('ADD' or 'SEARCH') and target person's name if enrolling."),
+    ("system", INTENT_SYSTEM_PROMPT),
     ("human", "Instruction: {instruction}")
 ])
 
 chain = prompt | parser
-
-async def face_recognition_node(state: dict) -> dict:
-    """
-    LangGraph Node for Face Recognition.
-    Reads instruction and files from state, determines intent, and executes tool.
-    """
-    print("🤖 [Face Agent] Analyzing request...")
-    
-    instruction = state["messages"][-1].content
-    files = state.get("files") or []
-
-    # Determine Intent using LLM
-    try:
-        parsed_result = await chain.ainvoke({"instruction": instruction})
-        action = parsed_result.intent.upper()
-        person_name = parsed_result.person_name
-    except Exception as e:
-        print(f" LLM Parsing error: {e}")
-        action, person_name = "SEARCH", None
-
-    # Route to Tool
-    if action == "ADD":
-        if not person_name:
-            result_msg = "Please provide the person's name in your request to enroll them (e.g., 'Enroll this person as John Doe')."
-        elif not files:
-            result_msg = "Please attach an image to enroll the person."
-        else:
-            result = await add_tool.execute(person_name=person_name, files=files)
-            result_msg = result.get("message", str(result))
-            
-    else:  # SEARCH
-        if not files:
-            result_msg = "Please attach an image so I can identify the person."
-        else:
-            result = await search_tool.execute(files=files)
-            result_msg = format_search_results(result)
-
-    queue_updates = update_queue(state, "FACE")
-
-    return {
-        "messages": [AIMessage(content=result_msg)],
-        "last_agent": "Face Recognition Agent",
-        **queue_updates
-    }
 
 
 def format_search_results(result: dict) -> str:
@@ -90,16 +75,84 @@ def format_search_results(result: dict) -> str:
         filename = res.get("filename", "image")
         matches = res.get("matches", [])
         
+        responses.append(f"**Image: {filename}**\n")
+        
         if not matches:
-            responses.append(f"No faces detected in `{filename}`.")
+            responses.append("No faces detected.\n")
             continue
             
         for idx, match in enumerate(matches):
             name = match['person_name']
             conf = match['similarity_percent']
             if name == "Unknown":
-                responses.append(f"Face #{idx+1} in `{filename}`: **Unknown Person** (No match in database).")
+                responses.append(f"Face {idx+1}: **Unknown**\n")
             else:
-                responses.append(f"Face #{idx+1} in `{filename}`: Identified as **{name}** ({conf}% match).")
+                responses.append(f"Face {idx+1}: **{name}** ({conf}%)\n")
             
     return "\n".join(responses)
+
+
+def format_agent_output(state: SubTaskState, agent_name: str, content: str) -> dict:
+    """Standardized response formatter for global state management."""
+    if state.get("is_final", False):
+        return {
+            "final_outputs": [{"agent": agent_name, "content": content}],
+            "last_agent": agent_name
+        }
+    else:
+        return {
+            "step_results": [f"[{agent_name} Output]:\n{content}"],
+            "last_agent": agent_name
+        }
+
+
+async def face_node(state: SubTaskState) -> dict:
+    """
+    LangGraph Node for Face Recognition.
+    Reads subtask query and files from state, determines intent, and executes tools.
+    """
+    instruction = state.get("query", "")
+    files = state.get("files") or []
+
+    print(f"\n========== FACE ==========\nQuery: {instruction}\nFiles attached: {len(files)}\n")
+
+    # Determine Intent using LLM
+    try:
+        parsed_result = await chain.ainvoke({"instruction": instruction})
+        action = parsed_result.intent.upper()
+        person_name = parsed_result.person_name
+        
+        # Clean up the parsed name
+        if person_name:
+            person_name = person_name.strip()
+            
+    except Exception as e:
+        print(f" LLM Parsing error: {e}")
+        # Safe fallback instead of blindly defaulting to SEARCH
+        return format_agent_output(
+            state, 
+            "FACE", 
+            "I couldn't determine whether you want to enroll or search. Please rephrase your request."
+        )
+
+    # Route to Tool
+    if action == "ADD":
+        if not person_name:
+            result_msg = "Please provide the person's name in your request to enroll them (e.g., 'Enroll this person as John Doe')."
+        elif not files:
+            result_msg = "Please attach an image to enroll the person."
+        else:
+            result: dict = await add_tool.execute(person_name=person_name, files=files)
+            if result.get("success"):
+                result_msg = result["message"]
+            else:
+                result_msg = result.get("message", "Operation failed.")
+            
+    else:  # SEARCH
+        if not files:
+            result_msg = "Please attach an image so I can identify the person."
+        else:
+            result: dict = await search_tool.execute(files=files)
+            result_msg = format_search_results(result)
+
+    return format_agent_output(state, "FACE", result_msg)

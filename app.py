@@ -2,7 +2,12 @@ import streamlit as st
 import requests
 import os
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000/chat")
+# ------------------------------------------------------------------------------
+# CONFIGURATION & CONSTANTS
+# ------------------------------------------------------------------------------
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+REQUEST_TIMEOUT = 150  # 150 seconds execution budget for complex pipelines
+MAX_FILE_SIZE_MB = 10
 
 st.set_page_config(
     page_title="Multi-Agent AI System",
@@ -12,7 +17,7 @@ st.set_page_config(
 )
 
 def load_css():
-    """Injects custom CSS to create a modern UI and style the + button."""
+    """Injects custom CSS to style the UI, badges, and attachment popover button."""
     st.markdown("""
     <style>
         /* Gradient Header */
@@ -76,11 +81,7 @@ def load_css():
             margin-bottom: 8px;
         }
 
-        /* =========================================
-           ATTACHMENT (+) BUTTON STYLING FIXES 
-           ========================================= */
-           
-        /* 1. COMPLETELY HIDE THE DOWNWARD ARROW */
+        /* ATTACHMENT (+) BUTTON STYLING */
         div[data-testid="stPopover"] button svg,
         div[data-testid="stPopover"] button [data-testid="stIconMaterial"] {
             display: none !important;
@@ -90,7 +91,6 @@ def load_css():
             opacity: 0 !important;
         }
 
-        /* 2. STYLE THE SQUARE + BUTTON */
         div[data-testid="stPopover"] {
             width: 36px !important;
             height: 36px !important;
@@ -125,7 +125,7 @@ def load_css():
             margin: 0 !important;
             padding: 0 !important;
             position: relative !important;
-            top: -2px !important; /* Visually centers the + */
+            top: -2px !important;
         }
 
         div[data-testid="stPopover"] button:hover p {
@@ -145,13 +145,12 @@ def load_css():
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
         }
         
-        /* Agent Specific Colors */
         .badge-supervisor { background: linear-gradient(135deg, #9333ea, #6b21a8); } 
         .badge-weather { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }    
         .badge-translation { background: linear-gradient(135deg, #22c55e, #15803d); } 
         .badge-facts { background: linear-gradient(135deg, #f97316, #c2410c); }       
         .badge-summary { background: linear-gradient(135deg, #eab308, #a16207); }     
-        .badge-gatekeeper { background: linear-gradient(135deg, #ec4899, #be185d); }  
+        .badge-movie { background: linear-gradient(135deg, #ec4899, #be185d); }  
         .badge-face { background: linear-gradient(135deg, #06b6d4, #0e7490); }        
         .badge-system { background: linear-gradient(135deg, #ef4444, #b91c1c); }      
         .badge-default { background: linear-gradient(135deg, #64748b, #334155); }     
@@ -165,13 +164,11 @@ def load_css():
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         
-        /* AI Message Background */
         [data-testid="stChatMessage"]:has([data-testid="stIconAssistant"]),
         [data-testid="stChatMessage"]:nth-child(even) {
             background: rgba(30, 41, 59, 0.7);
         }
 
-        /* Right align User Messages */
         [data-testid="stChatMessage"]:has([data-testid="stIconUser"]) {
             background: rgba(14, 165, 233, 0.1);
             flex-direction: row-reverse;
@@ -179,7 +176,6 @@ def load_css():
             border-color: rgba(14, 165, 233, 0.2);
         }
 
-        /* Fix avatar margin when reversed */
         [data-testid="stChatMessage"]:has([data-testid="stIconUser"]) > div:first-child {
             margin-right: 0;
             margin-left: 15px;
@@ -188,33 +184,26 @@ def load_css():
     """, unsafe_allow_html=True)
 
 def inject_ui_fixes():
-    """Aggressively injects JS to lock the + button inside the chat input."""
+    """Injects JS to lock the + button inside the chat input box."""
     st.html("""
     <script>
         function lockButtonInPlace() {
-            // Access the parent DOM outside the st.html iframe
             const doc = window.parent.document;
             const chatInput = doc.querySelector('[data-testid="stChatInput"]');
             const popover = doc.querySelector('[data-testid="stPopover"]');
 
             if (chatInput && popover) {
-                // Find the immediate text container inside the chat block
                 const innerWrapper = chatInput.querySelector('div');
                 
                 if (innerWrapper && !innerWrapper.contains(popover)) {
-                    // Lock the container relative
                     innerWrapper.style.position = 'relative';
-                    
-                    // Physically move the + button inside
                     innerWrapper.appendChild(popover);
                     
-                    // Position it perfectly on the far left
                     popover.style.position = 'absolute';
                     popover.style.left = '10px';
                     popover.style.bottom = '10px';
                     popover.style.zIndex = '9999';
                     
-                    // Push the text cursor right so typing doesn't overlap the button
                     const textArea = chatInput.querySelector('textarea');
                     if (textArea) {
                         textArea.style.setProperty('padding-left', '55px', 'important');
@@ -222,47 +211,95 @@ def inject_ui_fixes():
                 }
             }
         }
-        
-        // Run continuously every 50ms to defeat Streamlit's React re-renders
         setInterval(lockButtonInPlace, 50);
     </script>
     """)
 
 def init_session_state():
-    """Initializes the chat history in Streamlit session state."""
+    """Initializes session state variables."""
     if "messages" not in st.session_state:
         st.session_state.messages = []
-    if "uploaded_file" not in st.session_state:
-        st.session_state.uploaded_file = None
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = []
+    if "last_plan" not in st.session_state:
+        st.session_state.last_plan = None
 
 def get_agent_styling(agent_name: str):
+    """Returns matching emoji and CSS badge class based on agent identity."""
     name = agent_name.lower() if agent_name else ""
     if "supervisor" in name: return "🟣", "badge-supervisor"
     elif "weather" in name: return "🔵", "badge-weather"
     elif "translation" in name: return "🟢", "badge-translation"
     elif "fact" in name: return "🟠", "badge-facts"
     elif "summary" in name: return "🟡", "badge-summary"
-    elif "gatekeeper" in name: return "🛑", "badge-gatekeeper"
+    elif "movie" in name: return "🎬", "badge-movie"
     elif "face" in name or "arcface" in name: return "👤", "badge-face"
-    elif "system" in name or "error" in name: return "⚠️", "badge-system"
+    elif "system" in name or "error" in name or "validation" in name: return "⚠️", "badge-system"
     else: return "🤖", "badge-default"
 
-def send_request_to_backend(user_text: str, uploaded_file=None):
+
+# ------------------------------------------------------------------------------
+# BACKEND REQUEST HELPERS
+# ------------------------------------------------------------------------------
+def send_text_request(user_text: str):
+    target_url = f"{API_BASE_URL}/api/chat"
+    return requests.post(target_url, json={"message": user_text}, timeout=REQUEST_TIMEOUT)
+
+def send_file_request(user_text: str, uploaded_files: list):
+    target_url = f"{API_BASE_URL}/api/chat/upload"
+    files_payload = [
+        ("files", (f.name, f.getvalue(), f.type)) 
+        for f in uploaded_files
+    ]
+    return requests.post(target_url, data={"message": user_text}, files=files_payload, timeout=REQUEST_TIMEOUT)
+
+def send_request_to_backend(user_text: str, uploaded_files=None):
+    """
+    Main dispatcher for backend execution requests with detailed exception handling.
+    Returns: (outputs: list, last_agent: str, plan: list|None)
+    """
     try:
-        payload = {"user_input": user_text}
-        files_payload = None
-        if uploaded_file:
-            files_payload = [("files", (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type))]
+        # File Size Validation Check
+        if uploaded_files:
+            for file in uploaded_files:
+                file_size_mb = len(file.getvalue()) / (1024 * 1024)
+                if file_size_mb > MAX_FILE_SIZE_MB:
+                    err_msg = f"File '{file.name}' ({file_size_mb:.1f} MB) exceeds maximum allowed size of {MAX_FILE_SIZE_MB} MB."
+                    return [{"agent": "Validation Error", "content": err_msg}], "Validation Error", None
 
-        response = requests.post(API_URL, data=payload, files=files_payload, timeout=150)
+            response = send_file_request(user_text, uploaded_files)
+        else:
+            response = send_text_request(user_text)
+
         response.raise_for_status()
+        res_data = response.json()
         
-        data = response.json()
-        return data.get("response", "No response content found."), data.get("last_agent", "Unknown Agent")
+        outputs = res_data.get("outputs", [])
+        last_agent = res_data.get("last_agent", "System")
+        plan = res_data.get("plan")
         
-    except Exception as e:
-        return f"System Error: {str(e)}", "System Error"
+        if not outputs:
+            return [{"agent": last_agent, "content": "No outputs produced by execution pipeline."}], last_agent, plan
 
+        return outputs, last_agent, plan
+        
+    except requests.exceptions.ConnectionError:
+        msg = f"Cannot connect to FastAPI server at {API_BASE_URL}. Ensure main.py is running."
+        return [{"agent": "System Error", "content": msg}], "System Error", None
+    except requests.exceptions.Timeout:
+        msg = f"Backend timed out after {REQUEST_TIMEOUT} seconds. Try reducing workflow query complexity."
+        return [{"agent": "System Error", "content": msg}], "System Error", None
+    except requests.exceptions.HTTPError as http_err:
+        msg = f"Backend returned HTTP error: {http_err.response.status_code} - {http_err.response.text}"
+        return [{"agent": "System Error", "content": msg}], "System Error", None
+    except Exception as e:
+        msg = f"Unexpected client error: {str(e)}"
+        return [{"agent": "System Error", "content": msg}], "System Error", None
+
+
+# ------------------------------------------------------------------------------
+# UI COMPONENT RENDERERS
+# ------------------------------------------------------------------------------
 def display_sidebar():
     with st.sidebar:
         st.markdown("<div class='sidebar-header-title'>🤖 Multi-Agent AI</div>", unsafe_allow_html=True)
@@ -273,12 +310,14 @@ def display_sidebar():
         with col_a:
             if st.button("✨ New", use_container_width=True, type="primary"):
                 st.session_state.messages = []
-                st.session_state.uploaded_file = None
+                st.session_state.uploaded_files = []
+                st.session_state.last_plan = None
                 st.rerun()
         with col_b:
             if st.button("🗑️ Clear", use_container_width=True):
                 st.session_state.messages = []
-                st.session_state.uploaded_file = None
+                st.session_state.uploaded_files = []
+                st.session_state.last_plan = None
                 st.rerun()
 
         st.markdown("<div class='sidebar-section-label'>Overview</div>", unsafe_allow_html=True)
@@ -287,12 +326,22 @@ def display_sidebar():
         active_agent = st.session_state.messages[-1]["agent"] if st.session_state.messages else "None"
         col2.metric("Last Agent", active_agent.replace(" Agent", "") if active_agent else "None")
 
+        # Visualizer for Execution Plan (Debug Mode)
+        if st.session_state.last_plan:
+            st.markdown("<div class='sidebar-section-label'>Execution Plan</div>", unsafe_allow_html=True)
+            with st.expander("🔍 View Stages Plan", expanded=True):
+                for stage_idx, stage_tasks in enumerate(st.session_state.last_plan, 1):
+                    agents_list = [t.get("agent", "UNKNOWN") for t in stage_tasks]
+                    st.markdown(f"**Stage {stage_idx}:** `{', '.join(agents_list)}`")
+                    for t in stage_tasks:
+                        st.caption(f"↳ *{t.get('agent')}*: {t.get('query')}")
+
 def display_chat_interface():
     if not st.session_state.messages:
         st.markdown("""
-        <div style='text-align: center; color: #fffff; margin-top: -30px; margin-bottom: 50px;'>
+        <div style='text-align: center; color: #ffffff; margin-top: -10px; margin-bottom: 40px;'>
             <h3>👋 Welcome! I am your Multi-Agent Assistant.</h3>
-            <p>Describe your task, ask a question, or upload an image.<br>
+            <p style='color: #94a3b8;'>Describe your task, ask a question, or upload one or more images.<br>
             I'll assemble the right AI specialists behind the scenes to get it done.</p>
         </div>
         """, unsafe_allow_html=True)
@@ -308,52 +357,69 @@ def display_chat_interface():
                 st.markdown(msg["content"])
 
 def handle_user_input():
-    # 1. Render Popover (JS will move this inside the Chat Input)
-    with st.popover("+", help="Attach Image"):
-        st.markdown("<div style='font-weight: 600; margin-bottom: 8px;'>Attach Image File</div>", unsafe_allow_html=True)
+    # 1. Attachment Popover supporting multiple image uploads
+    with st.popover("+", help="Attach Image File(s)"):
+        st.markdown("<div style='font-weight: 600; margin-bottom: 8px;'>Attach Image Files</div>", unsafe_allow_html=True)
         
-        if st.session_state.uploaded_file:
-            st.success(f"Attached: {st.session_state.uploaded_file.name}")
-            if st.button("Remove Attachment"):
-                st.session_state.uploaded_file = None
+        if st.session_state.uploaded_files:
+            st.success(f"{len(st.session_state.uploaded_files)} file(s) attached.")
+            if st.button("Clear Attachments"):
+                st.session_state.uploaded_files = []
                 st.rerun()
                 
-        uploaded_file = st.file_uploader("Select image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+        new_files = st.file_uploader(
+            "Select images", 
+            type=["jpg", "jpeg", "png"], 
+            accept_multiple_files=True,
+            label_visibility="collapsed"
+        )
         
-        if uploaded_file and (st.session_state.uploaded_file != uploaded_file):
-            st.session_state.uploaded_file = uploaded_file
+        if new_files and (st.session_state.uploaded_files != new_files):
+            st.session_state.uploaded_files = new_files
             st.rerun()
 
-    # 2. Render Native Chat Input (Sticks to the bottom natively)
+    # 2. Native Chat Input
     prompt = st.chat_input("Type your message here...")
     
     if prompt:
-        file_to_send = st.session_state.uploaded_file
+        files_to_send = st.session_state.uploaded_files
         user_display = prompt
         
-        if file_to_send:
-            user_display += f"\n\n*(Attached file: `{file_to_send.name}`)*"
+        if files_to_send:
+            filenames = ", ".join([f"`{f.name}`" for f in files_to_send])
+            user_display += f"\n\n*(Attached {len(files_to_send)} file(s): {filenames})*"
 
+        # Store User Message
         st.session_state.messages.append({"role": "user", "content": user_display, "agent": None})
         with st.chat_message("user", avatar="🧑‍💻"):
             st.markdown(user_display)
             
+        # Execute & Display Assistant Response
         with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("Processing request..."):
-                ai_response, agent_name = send_request_to_backend(prompt, file_to_send)
+            with st.spinner("🤖 Agents are working..."):
+                agent_outputs, last_agent, plan = send_request_to_backend(prompt, files_to_send)
                 
-                emoji, css_class = get_agent_styling(agent_name)
-                st.markdown(f"<div class='agent-badge {css_class}'>{emoji} {agent_name}</div>", unsafe_allow_html=True)
-                st.markdown(ai_response)
+                # Update plan in session state if returned
+                if plan:
+                    st.session_state.last_plan = plan
                 
-        st.session_state.messages.append({
-            "role": "ai",
-            "content": ai_response,
-            "agent": agent_name
-        })
+                # Render worker node outputs
+                for output in agent_outputs:
+                    agent_name = output.get("agent", "Assistant")
+                    content = output.get("content", "")
+                    
+                    emoji, css_class = get_agent_styling(agent_name)
+                    st.markdown(f"<div class='agent-badge {css_class}'>{emoji} {agent_name}</div>", unsafe_allow_html=True)
+                    st.markdown(content)
+                    
+                    st.session_state.messages.append({
+                        "role": "ai",
+                        "content": content,
+                        "agent": agent_name
+                    })
         
-        # Clear the file after sending
-        st.session_state.uploaded_file = None
+        # Reset file attachments after message dispatch
+        st.session_state.uploaded_files = []
         st.rerun()
 
 def main():
@@ -368,6 +434,5 @@ def main():
     display_chat_interface()
     handle_user_input()
 
-# Ensures the app actually runs!
 if __name__ == "__main__":
     main()

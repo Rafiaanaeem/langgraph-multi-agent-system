@@ -1,0 +1,9 @@
+#docker file
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+.env
+.git
+.vscode/
