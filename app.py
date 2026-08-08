@@ -2,11 +2,8 @@ import streamlit as st
 import requests
 import os
 
-# ------------------------------------------------------------------------------
-# CONFIGURATION & CONSTANTS
-# ------------------------------------------------------------------------------
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
-REQUEST_TIMEOUT = 150  # 150 seconds execution budget for complex pipelines
+REQUEST_TIMEOUT = 150  
 MAX_FILE_SIZE_MB = 10
 
 st.set_page_config(
@@ -238,9 +235,7 @@ def get_agent_styling(agent_name: str):
     else: return "🤖", "badge-default"
 
 
-# ------------------------------------------------------------------------------
-# BACKEND REQUEST HELPERS
-# ------------------------------------------------------------------------------
+
 def send_text_request(user_text: str):
     target_url = f"{API_BASE_URL}/api/chat"
     return requests.post(target_url, json={"message": user_text}, timeout=REQUEST_TIMEOUT)
@@ -297,9 +292,7 @@ def send_request_to_backend(user_text: str, uploaded_files=None):
         return [{"agent": "System Error", "content": msg}], "System Error", None
 
 
-# ------------------------------------------------------------------------------
-# UI COMPONENT RENDERERS
-# ------------------------------------------------------------------------------
+
 def display_sidebar():
     with st.sidebar:
         st.markdown("<div class='sidebar-header-title'>🤖 Multi-Agent AI</div>", unsafe_allow_html=True)
