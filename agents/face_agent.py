@@ -91,7 +91,6 @@ def format_search_results(result: dict) -> str:
             
     return "\n".join(responses)
 
-
 def format_agent_output(state: SubTaskState, agent_name: str, content: str) -> dict:
     """Standardized response formatter for global state management."""
     if state.get("is_final", False):
