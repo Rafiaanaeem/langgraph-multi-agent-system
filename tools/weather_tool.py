@@ -1,7 +1,6 @@
 import requests
 from langchain_core.tools import tool
 from config import Config
-
 @tool
 def get_current_weather(city: str = "Islamabad") -> str:
     """Fetches the current weather for a given city using OpenWeatherMap.
